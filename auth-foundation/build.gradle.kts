@@ -147,6 +147,7 @@ kotlin {
                 implementation(libs.junit)
                 implementation(libs.room.testing)
                 implementation(libs.androidx.sqlite.bundled)
+                implementation(libs.okhttp.mock.web.server)
             }
         }
 

@@ -130,19 +130,29 @@ class CredentialImpl internal constructor(
         if (extraRequestParameters.isEmpty()) return refreshToken()
         return runCatching {
             val refreshTokenStr =
-                token.refreshToken ?: throw IllegalStateException("No refresh token available.")
+                currentToken().refreshToken ?: throw IllegalStateException("No refresh token available.")
             val newToken = client.refreshToken(refreshTokenStr, extraRequestParameters).getOrThrow()
             replaceToken(newToken)
         }
     }
 
     private suspend fun performRealRefresh(): Result<TokenInfo> {
+        // The refresh orchestrator is shared by every snapshot of this credential, and its factory
+        // may be bound to an older snapshot. Refresh tokens rotate on use, so the token to send
+        // must be resolved from the data source's current state — never from this snapshot, whose
+        // refresh token may already have been consumed by a previous refresh.
         val refreshTokenStr =
-            token.refreshToken ?: return Result.failure(
+            currentToken().refreshToken ?: return Result.failure(
                 IllegalStateException("No refresh token available.")
             )
         return client.refreshToken(refreshTokenStr)
     }
+
+    /**
+     * Returns this credential's current token state from the [CredentialDataSource], falling back
+     * to this snapshot's token when nothing is cached (e.g. this snapshot was constructed directly).
+     */
+    private suspend fun currentToken(): TokenInfo = dataSource.cachedToken(id) ?: token
 
     override suspend fun revokeToken(tokenType: RevokeTokenType): Result<Unit> =
         runCatching {
@@ -234,7 +244,10 @@ class CredentialImpl internal constructor(
             events.tryEmit(CredentialStoredAfterRemovedEvent(this))
             return this
         }
-        // Re-key the incoming token to this credential's ID so storage lookups succeed.
+        // Re-key the incoming token to this credential's ID so storage lookups succeed. Fields the
+        // response omits fall back to the credential's *current* token (not this snapshot's), since
+        // this snapshot may predate a refresh that rotated those tokens.
+        val fallback = currentToken()
         val rekeyed =
             TokenData(
                 id = id,
@@ -242,9 +255,9 @@ class CredentialImpl internal constructor(
                 expiresIn = newToken.expiresIn,
                 accessToken = newToken.accessToken,
                 scope = newToken.scope,
-                refreshToken = newToken.refreshToken ?: token.refreshToken,
+                refreshToken = newToken.refreshToken ?: fallback.refreshToken,
                 idToken = newToken.idToken,
-                deviceSecret = newToken.deviceSecret ?: token.deviceSecret,
+                deviceSecret = newToken.deviceSecret ?: fallback.deviceSecret,
                 issuedTokenType = newToken.issuedTokenType,
                 configuration = token.configuration,
                 issuedAt = token.configuration.clock.currentTimeEpochSecond()

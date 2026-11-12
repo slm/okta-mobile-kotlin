@@ -90,6 +90,13 @@ internal class CredentialDataSource(
     suspend fun isDeleted(id: String): Boolean = cacheMutex.withLock { id in deletedIds }
 
     /**
+     * Returns the current in-memory token for the given credential [id], or `null` if it isn't
+     * cached. This is the up-to-date token state shared by every snapshot of the credential, and
+     * the single source of truth for which refresh token is current after rotation.
+     */
+    internal suspend fun cachedToken(id: String): TokenInfo? = cacheMutex.withLock { cache[id] }
+
+    /**
      * Returns (or creates) a shared [CoalescingOrchestrator] for token refresh deduplication
      * for the given credential [id].
      */
